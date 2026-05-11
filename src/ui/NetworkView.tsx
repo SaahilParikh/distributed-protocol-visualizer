@@ -3,9 +3,9 @@ import type { InFlightMessage, WorldFrame } from '../trace/playback';
 import type { NodeId } from '../sim/types';
 import type { RaftSnapshot } from '../protocols/raft/messages';
 
-const CANVAS_SIZE = 500;
-const NODE_RADIUS = 40;
-const RING_RADIUS = 180;
+const CANVAS_SIZE = 520;
+const RING_RADIUS = 200;
+const NODE_RADIUS_FOR_COUNT = (count: number) => Math.max(20, 44 - count * 2);
 
 const ROLE_COLORS: Record<RaftSnapshot['role'], string> = {
   follower: '#64748b',
@@ -25,6 +25,7 @@ export interface NetworkViewProps {
 
 export function NetworkView({ nodeIds, frame }: NetworkViewProps) {
   const positions = placeNodesOnRing(nodeIds);
+  const nodeRadius = NODE_RADIUS_FOR_COUNT(nodeIds.length);
   return (
     <svg
       viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
@@ -40,6 +41,7 @@ export function NetworkView({ nodeIds, frame }: NetworkViewProps) {
           position={positions.get(nodeId)!}
           nodeId={nodeId}
           snapshot={frame.nodeSnapshots.get(nodeId) ?? null}
+          radius={nodeRadius}
         />
       ))}
       {frame.inFlight.map((message) => (
@@ -88,16 +90,17 @@ interface NodeCircleProps {
   readonly position: Point;
   readonly nodeId: NodeId;
   readonly snapshot: RaftSnapshot | null;
+  readonly radius: number;
 }
 
-function NodeCircle({ position, nodeId, snapshot }: NodeCircleProps) {
+function NodeCircle({ position, nodeId, snapshot, radius }: NodeCircleProps) {
   const role = snapshot?.role ?? 'follower';
   const term = snapshot?.currentTerm ?? 0;
   const logLength = snapshot?.log.length ?? 0;
   const commitIndex = snapshot?.commitIndex ?? -1;
   return (
     <g transform={`translate(${position.x}, ${position.y})`}>
-      <circle r={NODE_RADIUS} fill={ROLE_COLORS[role]} stroke="#0f172a" strokeWidth={2} />
+      <circle r={radius} fill={ROLE_COLORS[role]} stroke="#0f172a" strokeWidth={2} />
       <text textAnchor="middle" y={-6} fontSize={20} fontWeight={700} fill="white">
         {nodeId}
       </text>

@@ -9,25 +9,28 @@ import { worldAt } from '../../trace/playback';
 import type { FindNode, KademliaMessage, KademliaSnapshot } from './messages';
 import { KademliaNode, buildKademliaCluster, kademliaIdFor } from './kademlia';
 
-const NODE_IDS: readonly NodeId[] = ['A', 'B', 'C', 'D', 'E'];
+const NODE_POOL: readonly NodeId[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+const DEFAULT_NODE_COUNT = 10;
+const MIN_NODES = 3;
+const MAX_NODES = NODE_POOL.length;
 const NETWORK_CONFIG = { minDelayMs: 10, maxDelayMs: 40, dropProbability: 0 };
 const SPEED_OPTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4];
 const DEFAULT_SPEED = 0.05;
-const CANVAS_SIZE = 500;
-const NODE_RADIUS = 40;
-const RING_RADIUS = 180;
+const CANVAS_SIZE = 520;
+const RING_RADIUS = 200;
+const NODE_RADIUS_FOR_COUNT = (count: number) => Math.max(20, 44 - count * 2);
 
 function describeMessage(body: unknown): string {
   const message = body as KademliaMessage;
   return message.kind === 'findNode' ? `FindNode ${message.key}` : `Found ${message.owner.nodeId}`;
 }
 
-function buildSimulator(seed: number, dropProbability: number): Simulator<KademliaSnapshot> {
+function buildSimulator(nodeIds: readonly NodeId[], seed: number, dropProbability: number): Simulator<KademliaSnapshot> {
   const random = seededRandom(seed);
   const network = new Network({ ...NETWORK_CONFIG, dropProbability }, random);
-  const cluster = buildKademliaCluster(NODE_IDS);
+  const cluster = buildKademliaCluster(nodeIds);
   const simulator = new Simulator<KademliaSnapshot>({
-    nodeIds: NODE_IDS,
+    nodeIds,
     makeProtocol: (nodeId) => new KademliaNode(cluster.get(nodeId)!),
     describeMessage,
     describeTimer: () => '',
@@ -46,6 +49,7 @@ interface LiveState {
 }
 
 export default function KademliaApp() {
+  const [nodeCount, setNodeCount] = useState(DEFAULT_NODE_COUNT);
   const [seed, setSeed] = useState(1);
   const [dropProbability, setDropProbability] = useState(0.05);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
@@ -54,6 +58,7 @@ export default function KademliaApp() {
   const [key, setKey] = useState('hello');
   const [live, setLive] = useState<LiveState | null>(null);
   const lastWallRef = useRef<number | null>(null);
+  const nodeIds = useMemo(() => NODE_POOL.slice(0, nodeCount), [nodeCount]);
 
   useEffect(() => {
     if (!isRunning || live === null) {
@@ -84,10 +89,10 @@ export default function KademliaApp() {
   }, [live, dropProbability]);
 
   const handleStart = useCallback(() => {
-    const simulator = buildSimulator(seed, dropProbability);
+    const simulator = buildSimulator(nodeIds, seed, dropProbability);
     setLive({ simulator, virtualTime: 0, tick: 0 });
     setIsRunning(true);
-  }, [seed, dropProbability]);
+  }, [nodeIds, seed, dropProbability]);
 
   const frame = useMemo(() => {
     if (live === null) {
@@ -119,6 +124,21 @@ export default function KademliaApp() {
   return (
     <>
       <div className="controls">
+        <label>
+          Nodes:{' '}
+          <input
+            type="number"
+            min={MIN_NODES}
+            max={MAX_NODES}
+            value={nodeCount}
+            onChange={(event) => {
+              const next = Number(event.target.value) || DEFAULT_NODE_COUNT;
+              setNodeCount(Math.max(MIN_NODES, Math.min(MAX_NODES, next)));
+            }}
+            disabled={live !== null}
+            style={{ width: '4rem' }}
+          />
+        </label>
         <label>
           Seed:{' '}
           <input
@@ -167,7 +187,7 @@ export default function KademliaApp() {
           <label>
             Origin:{' '}
             <select value={origin} onChange={(event) => setOrigin(event.target.value)}>
-              {NODE_IDS.map((id) => (
+              {nodeIds.map((id) => (
                 <option key={id} value={id}>
                   {id}
                 </option>
@@ -195,8 +215,8 @@ export default function KademliaApp() {
           <div className="empty">Click Start to see the Kademlia overlay.</div>
         ) : (
           <>
-            <KademliaRing frame={frame} targetKey={key.trim() || 'key'} targetKeyId={targetKeyId} />
-            <LookupHistory nodeIds={NODE_IDS} frame={frame} />
+            <KademliaRing nodeIds={nodeIds} frame={frame} targetKey={key.trim() || 'key'} targetKeyId={targetKeyId} />
+            <LookupHistory nodeIds={nodeIds} frame={frame} />
           </>
         )}
       </main>
@@ -210,15 +230,18 @@ interface Point {
 }
 
 function KademliaRing({
+  nodeIds,
   frame,
   targetKey,
   targetKeyId,
 }: {
+  readonly nodeIds: readonly NodeId[];
   readonly frame: WorldFrame<KademliaSnapshot>;
   readonly targetKey: string;
   readonly targetKeyId: number;
 }): JSX.Element {
-  const positions = placeOnRing(NODE_IDS);
+  const positions = placeOnRing(nodeIds);
+  const nodeRadius = NODE_RADIUS_FOR_COUNT(nodeIds.length);
   return (
     <svg
       viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
@@ -227,7 +250,7 @@ function KademliaRing({
       role="img"
       aria-label="Kademlia cluster visualization"
     >
-      {renderPeerLines(NODE_IDS, positions)}
+      {renderPeerLines(nodeIds, positions)}
       <g>
         <text
           x={CANVAS_SIZE / 2}
@@ -258,7 +281,7 @@ function KademliaRing({
           id {targetKeyId}
         </text>
       </g>
-      {NODE_IDS.map((nodeId) => {
+      {nodeIds.map((nodeId) => {
         const snapshot = frame.nodeSnapshots.get(nodeId);
         return (
           <NodeCircle
@@ -267,6 +290,7 @@ function KademliaRing({
             nodeId={nodeId}
             snapshot={snapshot}
             targetKeyId={targetKeyId}
+            radius={nodeRadius}
           />
         );
       })}
@@ -317,17 +341,19 @@ function NodeCircle({
   nodeId,
   snapshot,
   targetKeyId,
+  radius,
 }: {
   readonly position: Point;
   readonly nodeId: NodeId;
   readonly snapshot: KademliaSnapshot | undefined;
   readonly targetKeyId: number;
+  readonly radius: number;
 }): JSX.Element {
   const kademliaId = snapshot?.kademliaId;
   const distance = kademliaId !== undefined ? kademliaId ^ targetKeyId : null;
   return (
     <g transform={`translate(${position.x}, ${position.y})`}>
-      <circle r={NODE_RADIUS} fill="#3b82f6" stroke="#0f172a" strokeWidth={2} />
+      <circle r={radius} fill="#3b82f6" stroke="#0f172a" strokeWidth={2} />
       <text textAnchor="middle" y={-8} fontSize={20} fontWeight={700} fill="white">
         {nodeId}
       </text>

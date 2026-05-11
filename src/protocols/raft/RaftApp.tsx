@@ -9,7 +9,10 @@ import { worldAt } from '../../trace/playback';
 import { LogView } from '../../ui/LogView';
 import { NetworkView } from '../../ui/NetworkView';
 
-const NODE_IDS: readonly NodeId[] = ['A', 'B', 'C', 'D', 'E'];
+const NODE_POOL: readonly NodeId[] = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
+const DEFAULT_NODE_COUNT = 10;
+const MIN_NODES = 3;
+const MAX_NODES = NODE_POOL.length;
 
 const NETWORK_CONFIG = { minDelayMs: 10, maxDelayMs: 40, dropProbability: 0 };
 const RAFT_CONFIG = {
@@ -44,11 +47,11 @@ function describeMessage(body: unknown): string {
   }
 }
 
-function buildSimulator(seed: number, dropProbability: number): Simulator<RaftSnapshot> {
+function buildSimulator(nodeIds: readonly NodeId[], seed: number, dropProbability: number): Simulator<RaftSnapshot> {
   const random = seededRandom(seed);
   const network = new Network({ ...NETWORK_CONFIG, dropProbability }, random);
   const simulator = new Simulator<RaftSnapshot>({
-    nodeIds: NODE_IDS,
+    nodeIds,
     makeProtocol: () => new RaftNode(RAFT_CONFIG, random),
     describeMessage,
     describeTimer: (token) => (token as { kind: string }).kind,
@@ -61,6 +64,7 @@ function buildSimulator(seed: number, dropProbability: number): Simulator<RaftSn
 }
 
 export default function RaftApp() {
+  const [nodeCount, setNodeCount] = useState(DEFAULT_NODE_COUNT);
   const [seed, setSeed] = useState(1);
   const [dropProbability, setDropProbability] = useState(0.05);
   const [speed, setSpeed] = useState(DEFAULT_SPEED);
@@ -70,6 +74,7 @@ export default function RaftApp() {
 
   const [live, setLive] = useState<LiveState | null>(null);
   const lastWallTimeRef = useRef<number | null>(null);
+  const nodeIds = useMemo(() => NODE_POOL.slice(0, nodeCount), [nodeCount]);
 
   useEffect(() => {
     if (!isRunning || live === null) {
@@ -100,10 +105,10 @@ export default function RaftApp() {
   }, [live, dropProbability]);
 
   const handleStart = useCallback(() => {
-    const simulator = buildSimulator(seed, dropProbability);
+    const simulator = buildSimulator(nodeIds, seed, dropProbability);
     setLive({ simulator, virtualTime: 0, tick: 0 });
     setIsRunning(true);
-  }, [seed, dropProbability]);
+  }, [nodeIds, seed, dropProbability]);
 
   const frame = useMemo(() => {
     if (live === null) {
@@ -142,6 +147,21 @@ export default function RaftApp() {
       </header>
 
       <div className="controls">
+        <label>
+          Nodes:{' '}
+          <input
+            type="number"
+            min={MIN_NODES}
+            max={MAX_NODES}
+            value={nodeCount}
+            onChange={(event) => {
+              const next = Number(event.target.value) || DEFAULT_NODE_COUNT;
+              setNodeCount(Math.max(MIN_NODES, Math.min(MAX_NODES, next)));
+            }}
+            disabled={live !== null}
+            style={{ width: '4rem' }}
+          />
+        </label>
         <label>
           Seed:{' '}
           <input
@@ -216,8 +236,8 @@ export default function RaftApp() {
           <div className="empty">Click Start to begin.</div>
         ) : (
           <>
-            <NetworkView nodeIds={NODE_IDS} frame={frame} />
-            <LogView nodeIds={NODE_IDS} snapshots={frame.nodeSnapshots} />
+            <NetworkView nodeIds={nodeIds} frame={frame} />
+            <LogView nodeIds={nodeIds} snapshots={frame.nodeSnapshots} />
           </>
         )}
       </main>
