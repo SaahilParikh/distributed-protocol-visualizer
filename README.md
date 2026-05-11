@@ -1,6 +1,6 @@
 # distributed-protocol-visualizer
 
-An interactive Raft visualizer in the browser. Five nodes, deterministic seeded
+An interactive Raft + Kademlia visualizer in the browser. Five nodes, deterministic seeded
 simulation, live playback. Submit log entries, crank up the drop rate, watch
 the cluster recover.
 
