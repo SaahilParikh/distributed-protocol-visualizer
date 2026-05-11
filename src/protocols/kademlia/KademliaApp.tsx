@@ -4,33 +4,34 @@ import { Network } from '../../sim/network';
 import { seededRandom } from '../../sim/random';
 import { Simulator } from '../../sim/simulator';
 import type { NodeId } from '../../sim/types';
-import { hashToUnit } from '../../sim/hash';
 import type { InFlightMessage, WorldFrame } from '../../trace/playback';
 import { worldAt } from '../../trace/playback';
-import type { ChordMessage, ChordSnapshot, Lookup } from './messages';
-import { ChordNode, buildRing } from './chord';
+import type { FindNode, KademliaMessage, KademliaSnapshot } from './messages';
+import { KademliaNode, buildKademliaCluster, kademliaIdFor } from './kademlia';
 
 const NODE_IDS: readonly NodeId[] = ['A', 'B', 'C', 'D', 'E'];
 const NETWORK_CONFIG = { minDelayMs: 10, maxDelayMs: 40, dropProbability: 0 };
 const SPEED_OPTIONS = [0.01, 0.1, 0.25, 0.5, 1, 2, 4];
-const CANVAS_SIZE = 500;
-const NODE_RADIUS = 32;
-const RING_RADIUS = 180;
+const CANVAS_WIDTH = 700;
+const CANVAS_HEIGHT = 320;
+const LEFT_MARGIN = 40;
+const RIGHT_MARGIN = 40;
+const AXIS_Y = 240;
+const NODE_RADIUS = 24;
+const ID_SPACE = 256;
 
 function describeMessage(body: unknown): string {
-  const message = body as ChordMessage;
-  return message.kind === 'lookup'
-    ? `Lookup ${message.key}`
-    : `Found ${message.owner}`;
+  const message = body as KademliaMessage;
+  return message.kind === 'findNode' ? `FindNode ${message.key}` : `Found ${message.owner.nodeId}`;
 }
 
-function buildSimulator(seed: number, dropProbability: number): Simulator<ChordSnapshot> {
+function buildSimulator(seed: number, dropProbability: number): Simulator<KademliaSnapshot> {
   const random = seededRandom(seed);
   const network = new Network({ ...NETWORK_CONFIG, dropProbability }, random);
-  const ring = buildRing(NODE_IDS);
-  const simulator = new Simulator<ChordSnapshot>({
+  const cluster = buildKademliaCluster(NODE_IDS);
+  const simulator = new Simulator<KademliaSnapshot>({
     nodeIds: NODE_IDS,
-    makeProtocol: (nodeId) => new ChordNode(ring.get(nodeId)!),
+    makeProtocol: (nodeId) => new KademliaNode(cluster.get(nodeId)!),
     describeMessage,
     describeTimer: () => '',
     network,
@@ -42,18 +43,18 @@ function buildSimulator(seed: number, dropProbability: number): Simulator<ChordS
 }
 
 interface LiveState {
-  readonly simulator: Simulator<ChordSnapshot>;
+  readonly simulator: Simulator<KademliaSnapshot>;
   readonly virtualTime: number;
   readonly tick: number;
 }
 
-export default function ChordApp() {
+export default function KademliaApp() {
   const [seed, setSeed] = useState(1);
   const [dropProbability, setDropProbability] = useState(0.05);
   const [speed, setSpeed] = useState(1);
   const [isRunning, setIsRunning] = useState(false);
   const [origin, setOrigin] = useState<NodeId>('A');
-  const [key, setKey] = useState('myfile');
+  const [key, setKey] = useState('hello');
   const [live, setLive] = useState<LiveState | null>(null);
   const lastWallRef = useRef<number | null>(null);
 
@@ -95,18 +96,20 @@ export default function ChordApp() {
     if (live === null) {
       return { time: 0, nodeSnapshots: new Map(), inFlight: [] as const };
     }
-    return worldAt<ChordSnapshot>(live.simulator.events(), live.virtualTime);
+    return worldAt<KademliaSnapshot>(live.simulator.events(), live.virtualTime);
   }, [live]);
+
+  const targetKeyId = useMemo(() => kademliaIdFor(key.trim() || 'key'), [key]);
 
   const handleLookup = () => {
     if (live === null) return;
     const trimmed = key.trim() || 'key';
-    const message: Lookup = {
-      kind: 'lookup',
+    const message: FindNode = {
+      kind: 'findNode',
       key: trimmed,
-      keyPosition: hashToUnit(trimmed),
+      keyId: kademliaIdFor(trimmed),
       origin,
-      path: [],
+      visited: [],
     };
     live.simulator.submitCommand(origin, message);
     setLive({
@@ -183,6 +186,7 @@ export default function ChordApp() {
               style={{ width: '8rem' }}
             />
           </label>
+          <span className="key-id">→ id {targetKeyId}</span>
           <button type="button" onClick={handleLookup}>
             Lookup
           </button>
@@ -191,10 +195,10 @@ export default function ChordApp() {
 
       <main>
         {live === null ? (
-          <div className="empty">Click Start to see the Chord ring.</div>
+          <div className="empty">Click Start to see the Kademlia overlay.</div>
         ) : (
           <>
-            <ChordRing frame={frame} />
+            <KademliaLine frame={frame} targetKeyId={targetKeyId} />
             <LookupHistory nodeIds={NODE_IDS} frame={frame} />
           </>
         )}
@@ -208,84 +212,106 @@ interface Point {
   readonly y: number;
 }
 
-function ChordRing({ frame }: { readonly frame: WorldFrame<ChordSnapshot> }): JSX.Element {
-  const positions = positionsByHash(frame);
+function KademliaLine({
+  frame,
+  targetKeyId,
+}: {
+  readonly frame: WorldFrame<KademliaSnapshot>;
+  readonly targetKeyId: number;
+}): JSX.Element {
+  const positions = positionsByKademliaId(frame);
+  const targetX = xForKademliaId(targetKeyId);
   return (
     <svg
-      viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
-      width={CANVAS_SIZE}
-      height={CANVAS_SIZE}
+      viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+      width="100%"
+      style={{ maxWidth: CANVAS_WIDTH }}
       role="img"
-      aria-label="Chord ring visualization"
+      aria-label="Kademlia number line"
     >
-      <circle
-        cx={CANVAS_SIZE / 2}
-        cy={CANVAS_SIZE / 2}
-        r={RING_RADIUS}
-        fill="none"
+      <line
+        x1={LEFT_MARGIN}
+        y1={AXIS_Y}
+        x2={CANVAS_WIDTH - RIGHT_MARGIN}
+        y2={AXIS_Y}
         stroke="#cbd5e1"
         strokeWidth={1}
       />
-      {renderSuccessorArcs(frame, positions)}
-      {[...positions.entries()].map(([nodeId, point]) => {
-        const snapshot = frame.nodeSnapshots.get(nodeId);
-        return (
-          <g key={nodeId} transform={`translate(${point.x}, ${point.y})`}>
-            <circle r={NODE_RADIUS} fill="#3b82f6" stroke="#0f172a" strokeWidth={2} />
-            <text textAnchor="middle" y={-2} fontSize={18} fontWeight={700} fill="white">
-              {nodeId}
-            </text>
-            <text textAnchor="middle" y={14} fontSize={10} fill="white">
-              {snapshot ? snapshot.position.toFixed(2) : ''}
-            </text>
-          </g>
-        );
-      })}
+      <text x={LEFT_MARGIN} y={AXIS_Y + 24} fontSize={11} fill="#94a3b8">
+        0
+      </text>
+      <text x={CANVAS_WIDTH - RIGHT_MARGIN} y={AXIS_Y + 24} fontSize={11} fill="#94a3b8" textAnchor="end">
+        255
+      </text>
+
+      <g>
+        <line
+          x1={targetX}
+          y1={AXIS_Y - 80}
+          x2={targetX}
+          y2={AXIS_Y + 12}
+          stroke="#dc2626"
+          strokeDasharray="4 3"
+          strokeWidth={1.5}
+        />
+        <text x={targetX} y={AXIS_Y - 88} fontSize={11} fill="#dc2626" textAnchor="middle">
+          target {targetKeyId}
+        </text>
+      </g>
+
+      {[...positions.entries()].map(([nodeId, point]) => (
+        <NodeMarker
+          key={nodeId}
+          nodeId={nodeId}
+          point={point}
+          snapshot={frame.nodeSnapshots.get(nodeId)}
+        />
+      ))}
+
       {frame.inFlight.map((message) => (
-        <LookupToken key={message.messageId} message={message} positions={positions} />
+        <HopToken key={message.messageId} message={message} positions={positions} />
       ))}
     </svg>
   );
 }
 
-function positionsByHash(frame: WorldFrame<ChordSnapshot>): Map<NodeId, Point> {
+function positionsByKademliaId(frame: WorldFrame<KademliaSnapshot>): Map<NodeId, Point> {
   const positions = new Map<NodeId, Point>();
-  const center = CANVAS_SIZE / 2;
   for (const [nodeId, snapshot] of frame.nodeSnapshots) {
-    const angle = snapshot.position * Math.PI * 2 - Math.PI / 2;
-    positions.set(nodeId, {
-      x: center + Math.cos(angle) * RING_RADIUS,
-      y: center + Math.sin(angle) * RING_RADIUS,
-    });
+    positions.set(nodeId, { x: xForKademliaId(snapshot.kademliaId), y: AXIS_Y });
   }
   return positions;
 }
 
-function renderSuccessorArcs(
-  frame: WorldFrame<ChordSnapshot>,
-  positions: Map<NodeId, Point>,
-): JSX.Element[] {
-  const arcs: JSX.Element[] = [];
-  for (const [nodeId, snapshot] of frame.nodeSnapshots) {
-    const from = positions.get(nodeId);
-    const to = positions.get(snapshot.successor);
-    if (from === undefined || to === undefined) continue;
-    arcs.push(
-      <line
-        key={`succ-${nodeId}`}
-        x1={from.x}
-        y1={from.y}
-        x2={to.x}
-        y2={to.y}
-        stroke="#e2e8f0"
-        strokeWidth={1}
-      />,
-    );
-  }
-  return arcs;
+function xForKademliaId(id: number): number {
+  const usable = CANVAS_WIDTH - LEFT_MARGIN - RIGHT_MARGIN;
+  return LEFT_MARGIN + (id / (ID_SPACE - 1)) * usable;
 }
 
-function LookupToken({
+function NodeMarker({
+  nodeId,
+  point,
+  snapshot,
+}: {
+  readonly nodeId: NodeId;
+  readonly point: Point;
+  readonly snapshot: KademliaSnapshot | undefined;
+}): JSX.Element {
+  return (
+    <g transform={`translate(${point.x}, ${point.y})`}>
+      <line y1={0} y2={-2} stroke="#0f172a" strokeWidth={2} />
+      <circle cy={-NODE_RADIUS - 4} r={NODE_RADIUS} fill="#3b82f6" stroke="#0f172a" strokeWidth={2} />
+      <text textAnchor="middle" y={-NODE_RADIUS - 1} fontSize={16} fontWeight={700} fill="white">
+        {nodeId}
+      </text>
+      <text textAnchor="middle" y={-NODE_RADIUS + 12} fontSize={9} fill="white">
+        id {snapshot?.kademliaId ?? '?'}
+      </text>
+    </g>
+  );
+}
+
+function HopToken({
   message,
   positions,
 }: {
@@ -296,11 +322,12 @@ function LookupToken({
   const to = positions.get(message.to);
   if (from === undefined || to === undefined) return null;
   const x = from.x + (to.x - from.x) * message.progress;
-  const y = from.y + (to.y - from.y) * message.progress;
-  const color = message.label.startsWith('Lookup') ? '#0f172a' : '#16a34a';
+  const arcHeight = 70;
+  const y = AXIS_Y - NODE_RADIUS * 2 - arcHeight * Math.sin(Math.PI * message.progress) - 10;
+  const color = message.label.startsWith('FindNode') ? '#0f172a' : '#16a34a';
   return (
     <g transform={`translate(${x}, ${y})`}>
-      <rect x={-34} y={-10} width={68} height={20} rx={10} fill={color} opacity={0.9} />
+      <rect x={-40} y={-10} width={80} height={20} rx={10} fill={color} opacity={0.9} />
       <text textAnchor="middle" y={4} fontSize={10} fill="white">
         {message.label.slice(0, 14)}
       </text>
@@ -313,29 +340,29 @@ function LookupHistory({
   frame,
 }: {
   readonly nodeIds: readonly NodeId[];
-  readonly frame: WorldFrame<ChordSnapshot>;
+  readonly frame: WorldFrame<KademliaSnapshot>;
 }): JSX.Element {
-  const all = [];
+  const entries = [];
   for (const nodeId of nodeIds) {
     const snapshot = frame.nodeSnapshots.get(nodeId);
     if (snapshot === undefined) continue;
     for (const entry of snapshot.completed) {
-      all.push({ originator: nodeId, ...entry });
+      entries.push({ origin: nodeId, ...entry });
     }
   }
-  all.sort((a, b) => b.completedAt - a.completedAt);
-  if (all.length === 0) {
-    return <div className="log-empty">No lookups yet. Enter a key and click Lookup.</div>;
+  if (entries.length === 0) {
+    return <div className="log-empty">No lookups yet.</div>;
   }
   return (
     <div className="lookup-history">
-      {all.map((entry, index) => (
-        <div key={`${entry.key}-${entry.completedAt}-${index}`} className="lookup-entry">
-          <span className="lookup-key">{entry.key}</span>
+      {entries.map((entry, index) => (
+        <div key={index} className="lookup-entry">
+          <span className="lookup-key">
+            {entry.key} ({entry.keyId})
+          </span>
           <span className="lookup-arrow">→</span>
-          <span className="lookup-owner">{entry.owner}</span>
+          <span className="lookup-owner">{entry.owner.nodeId}</span>
           <span className="lookup-path">{entry.path.join(' → ')}</span>
-          <span className="lookup-time">{entry.completedAt.toFixed(0)} ms</span>
         </div>
       ))}
     </div>

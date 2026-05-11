@@ -1,13 +1,13 @@
 import { useState } from 'react';
-import ChordApp from './protocols/chord/ChordApp';
+import KademliaApp from './protocols/kademlia/KademliaApp';
 import RaftApp from './protocols/raft/RaftApp';
 import './App.css';
 
-type Protocol = 'raft' | 'chord';
+type Protocol = 'raft' | 'kademlia';
 
 const PROTOCOLS: readonly { readonly id: Protocol; readonly label: string }[] = [
   { id: 'raft', label: 'Raft' },
-  { id: 'chord', label: 'Chord (DHT)' },
+  { id: 'kademlia', label: 'Kademlia (DHT)' },
 ];
 
 export default function App() {
@@ -29,7 +29,7 @@ export default function App() {
           ))}
         </div>
       </header>
-      {protocol === 'raft' ? <RaftApp /> : <ChordApp />}
+      {protocol === 'raft' ? <RaftApp /> : <KademliaApp />}
     </div>
   );
 }
