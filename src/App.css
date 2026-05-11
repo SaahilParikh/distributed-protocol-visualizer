@@ -175,3 +175,73 @@ main {
   padding: 1rem;
   text-align: center;
 }
+
+header h1 {
+  margin: 0 0 0.75rem;
+}
+
+.menu {
+  display: flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 1rem;
+}
+
+.menu-tab {
+  background: transparent;
+  border: none;
+  padding: 0.5rem 0.9rem;
+  color: #64748b;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-size: 0.95rem;
+}
+
+.menu-tab.active {
+  color: #0f172a;
+  border-bottom-color: #0f172a;
+  font-weight: 600;
+}
+
+.lookup-history {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.lookup-entry {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: #f8fafc;
+  border-radius: 4px;
+}
+
+.lookup-key {
+  font-family: ui-monospace, Menlo, monospace;
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.lookup-arrow {
+  color: #94a3b8;
+}
+
+.lookup-owner {
+  color: #0f766e;
+  font-weight: 700;
+}
+
+.lookup-path {
+  color: #64748b;
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.lookup-time {
+  color: #94a3b8;
+  font-variant-numeric: tabular-nums;
+}
