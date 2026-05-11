@@ -17,7 +17,8 @@ const RAFT_CONFIG = {
   electionTimeoutMaxMs: 300,
   heartbeatIntervalMs: 50,
 };
-const SPEED_OPTIONS = [0.01, 0.1, 0.25, 0.5, 1, 2, 4];
+const SPEED_OPTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4];
+const DEFAULT_SPEED = 0.05;
 
 interface LiveState {
   readonly simulator: Simulator<RaftSnapshot>;
@@ -62,7 +63,7 @@ function buildSimulator(seed: number, dropProbability: number): Simulator<RaftSn
 export default function RaftApp() {
   const [seed, setSeed] = useState(1);
   const [dropProbability, setDropProbability] = useState(0.05);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(DEFAULT_SPEED);
   const [isRunning, setIsRunning] = useState(false);
   const [clientName, setClientName] = useState('alice');
   const [command, setCommand] = useState('x');

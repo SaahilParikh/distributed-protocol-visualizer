@@ -11,14 +11,11 @@ import { KademliaNode, buildKademliaCluster, kademliaIdFor } from './kademlia';
 
 const NODE_IDS: readonly NodeId[] = ['A', 'B', 'C', 'D', 'E'];
 const NETWORK_CONFIG = { minDelayMs: 10, maxDelayMs: 40, dropProbability: 0 };
-const SPEED_OPTIONS = [0.01, 0.1, 0.25, 0.5, 1, 2, 4];
-const CANVAS_WIDTH = 700;
-const CANVAS_HEIGHT = 320;
-const LEFT_MARGIN = 40;
-const RIGHT_MARGIN = 40;
-const AXIS_Y = 240;
-const NODE_RADIUS = 24;
-const ID_SPACE = 256;
+const SPEED_OPTIONS = [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 4];
+const DEFAULT_SPEED = 0.05;
+const CANVAS_SIZE = 500;
+const NODE_RADIUS = 40;
+const RING_RADIUS = 180;
 
 function describeMessage(body: unknown): string {
   const message = body as KademliaMessage;
@@ -51,7 +48,7 @@ interface LiveState {
 export default function KademliaApp() {
   const [seed, setSeed] = useState(1);
   const [dropProbability, setDropProbability] = useState(0.05);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(DEFAULT_SPEED);
   const [isRunning, setIsRunning] = useState(false);
   const [origin, setOrigin] = useState<NodeId>('A');
   const [key, setKey] = useState('hello');
@@ -186,7 +183,7 @@ export default function KademliaApp() {
               style={{ width: '8rem' }}
             />
           </label>
-          <span className="key-id">→ id {targetKeyId}</span>
+          <span className="key-id">id {targetKeyId}</span>
           <button type="button" onClick={handleLookup}>
             Lookup
           </button>
@@ -198,7 +195,7 @@ export default function KademliaApp() {
           <div className="empty">Click Start to see the Kademlia overlay.</div>
         ) : (
           <>
-            <KademliaLine frame={frame} targetKeyId={targetKeyId} />
+            <KademliaRing frame={frame} targetKey={key.trim() || 'key'} targetKeyId={targetKeyId} />
             <LookupHistory nodeIds={NODE_IDS} frame={frame} />
           </>
         )}
@@ -212,62 +209,67 @@ interface Point {
   readonly y: number;
 }
 
-function KademliaLine({
+function KademliaRing({
   frame,
+  targetKey,
   targetKeyId,
 }: {
   readonly frame: WorldFrame<KademliaSnapshot>;
+  readonly targetKey: string;
   readonly targetKeyId: number;
 }): JSX.Element {
-  const positions = positionsByKademliaId(frame);
-  const targetX = xForKademliaId(targetKeyId);
+  const positions = placeOnRing(NODE_IDS);
   return (
     <svg
-      viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
-      width="100%"
-      style={{ maxWidth: CANVAS_WIDTH }}
+      viewBox={`0 0 ${CANVAS_SIZE} ${CANVAS_SIZE}`}
+      width={CANVAS_SIZE}
+      height={CANVAS_SIZE}
       role="img"
-      aria-label="Kademlia number line"
+      aria-label="Kademlia cluster visualization"
     >
-      <line
-        x1={LEFT_MARGIN}
-        y1={AXIS_Y}
-        x2={CANVAS_WIDTH - RIGHT_MARGIN}
-        y2={AXIS_Y}
-        stroke="#cbd5e1"
-        strokeWidth={1}
-      />
-      <text x={LEFT_MARGIN} y={AXIS_Y + 24} fontSize={11} fill="#94a3b8">
-        0
-      </text>
-      <text x={CANVAS_WIDTH - RIGHT_MARGIN} y={AXIS_Y + 24} fontSize={11} fill="#94a3b8" textAnchor="end">
-        255
-      </text>
-
+      {renderPeerLines(NODE_IDS, positions)}
       <g>
-        <line
-          x1={targetX}
-          y1={AXIS_Y - 80}
-          x2={targetX}
-          y2={AXIS_Y + 12}
-          stroke="#dc2626"
-          strokeDasharray="4 3"
-          strokeWidth={1.5}
-        />
-        <text x={targetX} y={AXIS_Y - 88} fontSize={11} fill="#dc2626" textAnchor="middle">
-          target {targetKeyId}
+        <text
+          x={CANVAS_SIZE / 2}
+          y={CANVAS_SIZE / 2 - 10}
+          textAnchor="middle"
+          fontSize={14}
+          fill="#475569"
+        >
+          target
+        </text>
+        <text
+          x={CANVAS_SIZE / 2}
+          y={CANVAS_SIZE / 2 + 14}
+          textAnchor="middle"
+          fontSize={20}
+          fontWeight={700}
+          fill="#dc2626"
+        >
+          {targetKey}
+        </text>
+        <text
+          x={CANVAS_SIZE / 2}
+          y={CANVAS_SIZE / 2 + 32}
+          textAnchor="middle"
+          fontSize={11}
+          fill="#dc2626"
+        >
+          id {targetKeyId}
         </text>
       </g>
-
-      {[...positions.entries()].map(([nodeId, point]) => (
-        <NodeMarker
-          key={nodeId}
-          nodeId={nodeId}
-          point={point}
-          snapshot={frame.nodeSnapshots.get(nodeId)}
-        />
-      ))}
-
+      {NODE_IDS.map((nodeId) => {
+        const snapshot = frame.nodeSnapshots.get(nodeId);
+        return (
+          <NodeCircle
+            key={nodeId}
+            position={positions.get(nodeId)!}
+            nodeId={nodeId}
+            snapshot={snapshot}
+            targetKeyId={targetKeyId}
+          />
+        );
+      })}
       {frame.inFlight.map((message) => (
         <HopToken key={message.messageId} message={message} positions={positions} />
       ))}
@@ -275,38 +277,68 @@ function KademliaLine({
   );
 }
 
-function positionsByKademliaId(frame: WorldFrame<KademliaSnapshot>): Map<NodeId, Point> {
+function placeOnRing(nodeIds: readonly NodeId[]): Map<NodeId, Point> {
+  const center = CANVAS_SIZE / 2;
   const positions = new Map<NodeId, Point>();
-  for (const [nodeId, snapshot] of frame.nodeSnapshots) {
-    positions.set(nodeId, { x: xForKademliaId(snapshot.kademliaId), y: AXIS_Y });
-  }
+  nodeIds.forEach((nodeId, index) => {
+    const angle = (index / nodeIds.length) * Math.PI * 2 - Math.PI / 2;
+    positions.set(nodeId, {
+      x: center + Math.cos(angle) * RING_RADIUS,
+      y: center + Math.sin(angle) * RING_RADIUS,
+    });
+  });
   return positions;
 }
 
-function xForKademliaId(id: number): number {
-  const usable = CANVAS_WIDTH - LEFT_MARGIN - RIGHT_MARGIN;
-  return LEFT_MARGIN + (id / (ID_SPACE - 1)) * usable;
+function renderPeerLines(nodeIds: readonly NodeId[], positions: Map<NodeId, Point>): JSX.Element[] {
+  const lines: JSX.Element[] = [];
+  for (let i = 0; i < nodeIds.length; i += 1) {
+    for (let j = i + 1; j < nodeIds.length; j += 1) {
+      const a = positions.get(nodeIds[i])!;
+      const b = positions.get(nodeIds[j])!;
+      lines.push(
+        <line
+          key={`${nodeIds[i]}-${nodeIds[j]}`}
+          x1={a.x}
+          y1={a.y}
+          x2={b.x}
+          y2={b.y}
+          stroke="#e2e8f0"
+          strokeWidth={1}
+        />,
+      );
+    }
+  }
+  return lines;
 }
 
-function NodeMarker({
+function NodeCircle({
+  position,
   nodeId,
-  point,
   snapshot,
+  targetKeyId,
 }: {
+  readonly position: Point;
   readonly nodeId: NodeId;
-  readonly point: Point;
   readonly snapshot: KademliaSnapshot | undefined;
+  readonly targetKeyId: number;
 }): JSX.Element {
+  const kademliaId = snapshot?.kademliaId;
+  const distance = kademliaId !== undefined ? kademliaId ^ targetKeyId : null;
   return (
-    <g transform={`translate(${point.x}, ${point.y})`}>
-      <line y1={0} y2={-2} stroke="#0f172a" strokeWidth={2} />
-      <circle cy={-NODE_RADIUS - 4} r={NODE_RADIUS} fill="#3b82f6" stroke="#0f172a" strokeWidth={2} />
-      <text textAnchor="middle" y={-NODE_RADIUS - 1} fontSize={16} fontWeight={700} fill="white">
+    <g transform={`translate(${position.x}, ${position.y})`}>
+      <circle r={NODE_RADIUS} fill="#3b82f6" stroke="#0f172a" strokeWidth={2} />
+      <text textAnchor="middle" y={-8} fontSize={20} fontWeight={700} fill="white">
         {nodeId}
       </text>
-      <text textAnchor="middle" y={-NODE_RADIUS + 12} fontSize={9} fill="white">
-        id {snapshot?.kademliaId ?? '?'}
+      <text textAnchor="middle" y={10} fontSize={11} fill="white">
+        id {kademliaId ?? '?'}
       </text>
+      {distance !== null && (
+        <text textAnchor="middle" y={26} fontSize={10} fill="white">
+          d = {distance}
+        </text>
+      )}
     </g>
   );
 }
@@ -322,14 +354,13 @@ function HopToken({
   const to = positions.get(message.to);
   if (from === undefined || to === undefined) return null;
   const x = from.x + (to.x - from.x) * message.progress;
-  const arcHeight = 70;
-  const y = AXIS_Y - NODE_RADIUS * 2 - arcHeight * Math.sin(Math.PI * message.progress) - 10;
+  const y = from.y + (to.y - from.y) * message.progress;
   const color = message.label.startsWith('FindNode') ? '#0f172a' : '#16a34a';
   return (
     <g transform={`translate(${x}, ${y})`}>
-      <rect x={-40} y={-10} width={80} height={20} rx={10} fill={color} opacity={0.9} />
+      <rect x={-44} y={-10} width={88} height={20} rx={10} fill={color} opacity={0.9} />
       <text textAnchor="middle" y={4} fontSize={10} fill="white">
-        {message.label.slice(0, 14)}
+        {message.label.slice(0, 16)}
       </text>
     </g>
   );
